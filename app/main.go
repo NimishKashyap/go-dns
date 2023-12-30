@@ -40,6 +40,23 @@ type DNSHeader struct {
 type Message struct {
 	Header   DNSHeader
 	Question Question
+	Answer   Answer
+}
+
+func encodeDomains(domains []string) []byte {
+	encoding := []byte{}
+
+	for _, domain := range domains {
+		labels := strings.Split(domain, ".")
+		for _, label := range labels {
+			encoding = append(encoding, byte(len(label)))
+			encoding = append(encoding, []byte(label)...)
+		}
+	}
+	encoding = append(encoding, '\x00')
+	fmt.Println(encoding)
+
+	return encoding
 }
 
 func newDNSHeader() *DNSHeader {
@@ -131,12 +148,15 @@ func (m *Message) encodeDomains(domains []string) {
 	}
 	m.Question.QNAME = append(m.Question.QNAME, '\x00')
 	m.Header.QDCOUNT = uint16(len(domains))
+
+	fmt.Println(m.Question.QNAME)
 }
 
 func (m *Message) toBytes() []byte {
 	buf := make([]byte, 0)
 	buf = append(buf, m.Header.toBytes()...)
 	buf = append(buf, m.Question.toBytes()...)
+	buf = append(buf, m.Answer.toBytes()...)
 
 	return buf
 }
@@ -144,12 +164,56 @@ func (m *Message) toBytes() []byte {
 func buildSampleResponse() []byte {
 	header := newDNSHeader()
 	question := NewQuestion()
+	answer := NewAnswer()
 	message := Message{
 		Header:   *header,
 		Question: *question,
+		Answer:   *answer,
 	}
-	message.encodeDomains([]string{"codecrafters.io"})
+	message.Question.QNAME = encodeDomains([]string{"codecrafters.io"})
+
+	message.Answer.Name = encodeDomains([]string{"codecrafters.io"})
+	message.Answer.RDLENGTH = 4
+	message.Answer.RDATA = []byte{127, 0, 0, 1}
+
+	message.Header.QDCOUNT = uint16(1)
+	message.Header.ANCOUNT = uint16(1)
+
 	return message.toBytes()
+}
+
+type Answer struct {
+	Name     []byte
+	Type     TYPE
+	Class    CLASS
+	TTL      int32
+	RDLENGTH uint16
+	RDATA    []byte
+}
+
+func NewAnswer() *Answer {
+	return &Answer{
+		Name:     []byte{},
+		Type:     TYPE_A,
+		Class:    CLASS_IN,
+		TTL:      60,
+		RDLENGTH: 0,
+		RDATA:    []byte{},
+	}
+}
+
+func (a *Answer) toBytes() []byte {
+	buf := make([]byte, 10+len(a.Name)+len(a.RDATA))
+
+	copy(buf[0:], a.Name)
+	binary.BigEndian.PutUint16(buf[len(a.Name):len(a.Name)+2], uint16(a.Type))
+	binary.BigEndian.PutUint16(buf[len(a.Name)+2:len(a.Name)+4], uint16(a.Class))
+	binary.BigEndian.PutUint16(buf[len(a.Name)+4:len(a.Name)+8], uint16(a.TTL))
+	binary.BigEndian.PutUint16(buf[len(a.Name)+8:len(a.Name)+10], uint16(a.RDLENGTH))
+
+	copy(buf[len(a.Name)+10:], a.RDATA)
+
+	return buf
 }
 
 func main() {
