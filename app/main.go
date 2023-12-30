@@ -84,6 +84,26 @@ func (h *DNSHeader) toBytes() []byte {
 	return buf
 }
 
+func fromBytes(bytes []byte) *Message {
+	header := DNSHeader{
+		ID:      binary.BigEndian.Uint16(bytes[0:2]),
+		FLAGS:   binary.BigEndian.Uint16(bytes[2:4]),
+		QDCOUNT: binary.BigEndian.Uint16(bytes[4:6]),
+		ANCOUNT: binary.BigEndian.Uint16(bytes[6:8]),
+		NSCOUNT: binary.BigEndian.Uint16(bytes[8:10]),
+		ARCOUNT: binary.BigEndian.Uint16(bytes[10:12]),
+	}
+
+	question := NewQuestion()
+	answer := NewAnswer()
+
+	return &Message{
+		Header:   header,
+		Question: *question,
+		Answer:   *answer,
+	}
+}
+
 type (
 	CLASS uint16
 	TYPE  uint16
@@ -127,6 +147,58 @@ func NewQuestion() *Question {
 		QTYPE:  TYPE_A,
 		QCLASS: CLASS_IN,
 	}
+}
+
+func buildResponse(request *Message) *Message {
+	header := newDNSHeader()
+	question := NewQuestion()
+	answer := NewAnswer()
+
+	response := Message{
+		Header:   *header,
+		Question: *question,
+		Answer:   *answer,
+	}
+
+	response.Header.ID = request.Header.ID
+
+	response.Header.FLAGS = 0x8000
+	// COPY OPCODE
+	response.Header.FLAGS |= response.Header.FLAGS & 0x7800
+	// Copy RD
+	response.Header.FLAGS |= response.Header.FLAGS & 0x0100
+
+	if (request.Header.FLAGS & 0x7800) != 0x0000 {
+		response.Header.FLAGS |= 0x004
+	}
+
+	response.Question.QNAME = request.Question.QNAME
+	response.Question.QTYPE = request.Question.QTYPE
+	response.Question.QCLASS = request.Question.QCLASS
+
+	response.Answer.Name = request.Question.QNAME
+	response.Answer.Type = request.Question.QTYPE
+	response.Answer.Class = request.Question.QCLASS
+	response.Answer.TTL = 60
+	response.Answer.RDLENGTH = 4
+	response.Answer.RDATA = []byte{127, 0, 0, 1}
+
+	return &response
+}
+
+func processMessage(buf []byte) []byte {
+	message := buildResponse(fromBytes(buf))
+
+	message.Question.QNAME = encodeDomains([]string{"codecrafters.io"})
+
+	message.Answer.Name = encodeDomains([]string{"codecrafters.io"})
+	message.Answer.RDLENGTH = 4
+	message.Answer.RDATA = []byte{127, 0, 0, 1}
+
+	message.Header.QDCOUNT = uint16(1)
+	message.Header.ANCOUNT = uint16(1)
+
+	return message.toBytes()
 }
 
 func (q *Question) toBytes() []byte {
@@ -252,7 +324,8 @@ func main() {
 		// header := newDNSHeader()
 		// response := header.toBytes()
 		//
-		response := buildSampleResponse()
+		// response := buildSampleResponse()
+		response := processMessage(buf[:size])
 
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
